@@ -189,7 +189,7 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		res.json({ current: rows.length ? rows[rows.length - 1].kg : null, history: rows });
 	});
 
-	// Glycémie FreeStyle Libre via LibreLinkUp (accès non officiel, lecture seule)
+	// Glycémie FreeStyle Libre via LibreLinkUp (accès non officiel, lecture seule).
 	// Le compte de suivi est saisi dans l'app, puis gardé chiffré (clé dérivée de APP_TOKEN) ; LLU_EMAIL / LLU_PASSWORD restent possibles en secours.
 	store.exec('CREATE TABLE IF NOT EXISTS llu_creds (id INTEGER PRIMARY KEY CHECK (id = 1), blob TEXT NOT NULL)');
 	const credKey = () => createHash('sha256').update('llu:' + (process.env.APP_TOKEN ?? '')).digest();
@@ -327,7 +327,7 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		}
 	});
 
-	
+	app.get('/api/today', auth, async (_req: Request, res: Response) => {
 		const ok = await refresh();
 		if (!ok) {
 			res.status(409).json({ error: 'Whoop non connecté' });
