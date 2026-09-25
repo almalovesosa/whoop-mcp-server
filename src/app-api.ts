@@ -97,6 +97,72 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		};
 	};
 
+	// Une journée passée : [from, to[ en ISO (bornes calculées par l'app dans son fuseau).
+	const buildDay = (from: string, to: string) => {
+		const back = new Date(new Date(from).getTime() - 36 * 3_600_000).toISOString();
+		const sleeps = db.getSleepsByDateRange(back, to, true);
+		const inDay = (iso: string) => iso >= from && iso < to;
+		const sleep = sleeps.find(s => !s.is_nap && inDay(s.end_time)) ?? null;
+		const nap = sleeps.find(s => s.is_nap && inDay(s.start_time)) ?? null;
+		const recovery = db.getRecoveriesByDateRange(from, to)[0] ?? null;
+		const cycle = db.getCyclesByDateRange(from, to)[0] ?? null;
+		const workouts = db.getWorkoutsByDateRange(from, to).map(w => ({
+			id: w.id,
+			name: w.sport_name ?? 'Activité',
+			startISO: w.start_time,
+			endISO: w.end_time,
+			strain: w.strain != null ? Math.round(w.strain * 10) / 10 : null,
+			calories: w.kilojoule != null ? Math.round(w.kilojoule / 4.184) : null,
+			avgHr: w.avg_hr,
+			maxHr: w.max_hr,
+			distanceMeter: w.distance_meter,
+		}));
+		const sleepMs = sleep ? (sleep.total_in_bed_milli ?? 0) - (sleep.total_awake_milli ?? 0) : null;
+		return {
+			recovery: recovery?.recovery_score ?? null,
+			hrv: recovery?.hrv_rmssd != null ? Math.round(recovery.hrv_rmssd) : null,
+			rhr: recovery?.resting_hr ?? null,
+			spo2: recovery?.spo2 != null ? Math.round(recovery.spo2 * 10) / 10 : null,
+			sleepHours: sleepMs != null ? Math.round((sleepMs / 3_600_000) * 100) / 100 : null,
+			sleepPerformance: sleep?.sleep_performance ?? null,
+			sleepNeededMin: null,
+			strain: cycle?.strain != null ? Math.round(cycle.strain * 10) / 10 : null,
+			calories: cycle?.kilojoule != null ? Math.round(cycle.kilojoule / 4.184) : null,
+			wakeTimeISO: null,
+			recoveryWeek: [] as number[],
+			hrvWeek: [] as number[],
+			workouts,
+			sleep: sleep ? { startISO: sleep.start_time, endISO: sleep.end_time, performance: sleep.sleep_performance } : null,
+			nap: nap ? { startISO: nap.start_time, endISO: nap.end_time, performance: nap.sleep_performance } : null,
+			updatedAt: new Date().toISOString(),
+		};
+	};
+
+	const validRange = (req: Request): { from: string; to: string } | null => {
+		const from = String(req.query.from ?? '');
+		const to = String(req.query.to ?? '');
+		if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) return null;
+		return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+	};
+
+	app.get('/api/day', auth, (req: Request, res: Response) => {
+		const range = validRange(req);
+		if (!range) {
+			res.status(400).json({ error: 'from/to invalides' });
+			return;
+		}
+		res.json(buildDay(range.from, range.to));
+	});
+
+	app.get('/api/history', auth, (req: Request, res: Response) => {
+		const range = validRange(req);
+		if (!range) {
+			res.status(400).json({ error: 'from/to invalides' });
+			return;
+		}
+		res.json({ recoveries: db.getRecoveriesByDateRange(range.from, range.to).map(r => ({ at: r.created_at, score: r.recovery_score })) });
+	});
+
 	app.get('/api/today', auth, async (_req: Request, res: Response) => {
 		const ok = await refresh();
 		if (!ok) {
