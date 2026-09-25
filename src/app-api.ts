@@ -172,6 +172,59 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		res.json(buildToday());
 	});
 
+	// Recherche web (Claude + outil web_search) des valeurs nutritionnelles d'un produit introuvable.
+	app.post('/api/nutrition-lookup', auth, async (req: Request, res: Response) => {
+		const key = process.env.ANTHROPIC_API_KEY;
+		if (!key) {
+			res.status(503).json({ error: 'ANTHROPIC_API_KEY manquant sur le serveur' });
+			return;
+		}
+		const barcode = String(req.body?.barcode ?? '').replace(/\D/g, '');
+		const name = String(req.body?.name ?? '').trim().slice(0, 120);
+		const brand = String(req.body?.brand ?? '').trim().slice(0, 80);
+		if (!barcode && !name) {
+			res.status(400).json({ error: 'barcode ou name requis' });
+			return;
+		}
+		const what = [barcode ? `code-barres EAN ${barcode}` : '', [brand, name].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
+		const prompt = `Trouve les valeurs nutritionnelles pour 100 g (ou 100 ml) de ce produit alimentaire : ${what}.
+Cherche sur le web (site de la marque, Open Food Facts, sites de supermarchés comme Carrefour, Auchan, Leclerc, Intermarché, fiches produit). Recoupe si possible deux sources.
+Réponds UNIQUEMENT avec un objet JSON sur une seule ligne : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"source":"site ou url"}
+carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas de valeurs fiables, réponds {"error":"introuvable"}. Ne devine jamais.`;
+		try {
+			const r = await fetch('https://api.anthropic.com/v1/messages', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+				body: JSON.stringify({
+					model: MODEL,
+					max_tokens: 1500,
+					tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+					messages: [{ role: 'user', content: prompt }],
+				}),
+			});
+			const data = (await r.json()) as { content?: { type: string; text?: string }[]; error?: { message?: string } };
+			if (!r.ok) {
+				res.status(502).json({ error: data.error?.message ?? 'Erreur Anthropic' });
+				return;
+			}
+			const text = (data.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
+			const raw = text.match(/\{[^{}]*\}/g)?.at(-1);
+			const j = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+			const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+			const kcal100 = num(j?.kcal100);
+			const carbs100 = num(j?.carbs100);
+			const fat100 = num(j?.fat100);
+			const protein100 = num(j?.protein100);
+			if (!j || j.error || kcal100 == null || carbs100 == null || fat100 == null || protein100 == null) {
+				res.status(404).json({ error: 'introuvable' });
+				return;
+			}
+			res.json({ name: String(j.name ?? name ?? ''), brand: String(j.brand ?? brand ?? ''), kcal100, carbs100, fat100, protein100, source: String(j.source ?? 'web') });
+		} catch (err) {
+			res.status(502).json({ error: err instanceof Error ? err.message : 'Erreur réseau' });
+		}
+	});
+
 	app.get('/api/state', auth, (_req: Request, res: Response) => {
 		const row = store.prepare('SELECT data, updated_at FROM app_state WHERE id = 1').get() as
 			| { data: string; updated_at: string }
