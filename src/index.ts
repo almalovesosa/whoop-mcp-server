@@ -5,7 +5,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } fr
 import express, { type Request, type Response } from 'express';
 import { WhoopClient } from './whoop-client.js';
 import { WhoopDatabase } from './database.js';
-import { WhoopSync } from './sync.js';
+import { WhoopSync } from './sync.js';   import { registerAppApi } from './app-api.js';
 
 interface ToolArguments {
 	days?: number;
@@ -707,6 +707,7 @@ async function main(): Promise<void> {
 			}
 		});
 
+		   registerAppApi(app, { db, client, sync, dbPath: config.dbPath });
 		app.get('/health', (_req: Request, res: Response) => {
 			res.json({ status: 'ok', authenticated: Boolean(db.getTokens()) });
 		});
