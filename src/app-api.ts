@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { Express, NextFunction, Request, Response } from 'express';
 import type { WhoopDatabase } from './database.js';
@@ -186,6 +187,88 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		}
 		const rows = store.prepare('SELECT weight_kilogram AS kg, first_observed_at AS at FROM weight_observations ORDER BY id ASC').all() as { kg: number; at: string }[];
 		res.json({ current: rows.length ? rows[rows.length - 1].kg : null, history: rows });
+	});
+
+	// Glycémie FreeStyle Libre via LibreLinkUp (accès non officiel, lecture seule).
+	// Identifiants du compte de suivi : variables LLU_EMAIL / LLU_PASSWORD (jamais renvoyées à l'app).
+	const llu: { base: string; token: string; accountId: string; patientId: string; cache?: { at: number; data: unknown } } = {
+		base: 'https://api.libreview.io',
+		token: '',
+		accountId: '',
+		patientId: '',
+	};
+	const lluHeaders = (auth?: boolean): Record<string, string> => ({
+		'content-type': 'application/json',
+		accept: 'application/json',
+		product: 'llu.android',
+		version: '4.16.0',
+		'cache-control': 'no-cache',
+		...(auth ? { authorization: `Bearer ${llu.token}`, 'account-id': llu.accountId } : {}),
+	});
+	const lluLogin = async () => {
+		const email = process.env.LLU_EMAIL;
+		const password = process.env.LLU_PASSWORD;
+		if (!email || !password) throw new Error('LLU_EMAIL / LLU_PASSWORD manquants sur le serveur');
+		for (let i = 0; i < 2; i++) {
+			const r = await fetch(`${llu.base}/llu/auth/login`, { method: 'POST', headers: lluHeaders(), body: JSON.stringify({ email, password }) });
+			const j: any = await r.json().catch(() => null);
+			if (j?.data?.redirect && j.data.region) {
+				llu.base = `https://api-${j.data.region}.libreview.io`;
+				continue;
+			}
+			if (j?.data?.step?.type) throw new Error(`LibreLinkUp demande une action dans son app (${j.data.step.type}) : ouvre-la et accepte les conditions`);
+			const token = j?.data?.authTicket?.token;
+			const uid = j?.data?.user?.id;
+			if (!token || !uid) throw new Error(`Connexion LibreLinkUp refusée (${r.status})`);
+			llu.token = token;
+			llu.accountId = createHash('sha256').update(uid).digest('hex');
+			return;
+		}
+		throw new Error('Région LibreLinkUp introuvable');
+	};
+	const lluGet = async (path: string) => {
+		if (!llu.token) await lluLogin();
+		let r = await fetch(llu.base + path, { headers: lluHeaders(true) });
+		if (r.status === 401 || r.status === 403) {
+			await lluLogin();
+			r = await fetch(llu.base + path, { headers: lluHeaders(true) });
+		}
+		if (!r.ok) throw new Error(`LibreLinkUp ${r.status}`);
+		return (await r.json()) as any;
+	};
+	// « 9/26/2026 2:34:12 PM » (UTC, FactoryTimestamp) → ISO
+	const lluTime = (t?: string) => {
+		const d = t ? new Date(t + ' UTC') : null;
+		return d && !isNaN(d.getTime()) ? d.toISOString() : null;
+	};
+	app.get('/api/glucose', auth, async (_req: Request, res: Response) => {
+		try {
+			if (llu.cache && Date.now() - llu.cache.at < 30_000) {
+				res.json(llu.cache.data);
+				return;
+			}
+			if (!llu.patientId) {
+				const c = await lluGet('/llu/connections');
+				llu.patientId = c?.data?.[0]?.patientId ?? '';
+				if (!llu.patientId) throw new Error('Aucun partage LibreLinkUp : accepte l\'invitation dans l\'app LibreLinkUp');
+			}
+			const g = await lluGet(`/llu/connections/${llu.patientId}/graph`);
+			const m = g?.data?.connection?.glucoseMeasurement;
+			const point = (x: any) => ({ at: lluTime(x?.FactoryTimestamp), mgdl: Math.round(Number(x?.ValueInMgPerDl)) });
+			const points = ((g?.data?.graphData ?? []) as any[]).map(point).concat(m ? [point(m)] : []).filter(p => p.at && Number.isFinite(p.mgdl) && p.mgdl > 0);
+			points.sort((a, b) => (a.at! < b.at! ? -1 : 1));
+			const uniq = points.filter((p, i) => i === 0 || p.at !== points[i - 1].at);
+			const data = {
+				current: m ? { ...point(m), trend: Number(m.TrendArrow) || null } : null,
+				points: uniq,
+				target: { low: g?.data?.connection?.targetLow ?? 70, high: g?.data?.connection?.targetHigh ?? 180 },
+			};
+			llu.cache = { at: Date.now(), data };
+			res.json(data);
+		} catch (err) {
+			llu.patientId = '';
+			res.status(502).json({ error: err instanceof Error ? err.message : 'LibreLinkUp indisponible' });
+		}
 	});
 
 	app.get('/api/today', auth, async (_req: Request, res: Response) => {
