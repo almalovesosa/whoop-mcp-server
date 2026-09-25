@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { Express, NextFunction, Request, Response } from 'express';
 import type { WhoopDatabase } from './database.js';
@@ -189,13 +189,44 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		res.json({ current: rows.length ? rows[rows.length - 1].kg : null, history: rows });
 	});
 
-	// Glycémie FreeStyle Libre via LibreLinkUp (accès non officiel, lecture seule).
-	// Identifiants du compte de suivi : variables LLU_EMAIL / LLU_PASSWORD (jamais renvoyées à l'app).
+	// Glycémie FreeStyle Libre via LibreLinkUp (accès non officiel, lecture seule)
+	// Le compte de suivi est saisi dans l'app, puis gardé chiffré (clé dérivée de APP_TOKEN) ; LLU_EMAIL / LLU_PASSWORD restent possibles en secours.
+	store.exec('CREATE TABLE IF NOT EXISTS llu_creds (id INTEGER PRIMARY KEY CHECK (id = 1), blob TEXT NOT NULL)');
+	const credKey = () => createHash('sha256').update('llu:' + (process.env.APP_TOKEN ?? '')).digest();
+	const saveCreds = (c: { email: string; password: string }) => {
+		const iv = randomBytes(12);
+		const ci = createCipheriv('aes-256-gcm', credKey(), iv);
+		const enc = Buffer.concat([ci.update(JSON.stringify(c), 'utf8'), ci.final()]);
+		const blob = Buffer.concat([iv, ci.getAuthTag(), enc]).toString('base64');
+		store.prepare('INSERT INTO llu_creds (id, blob) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET blob = excluded.blob').run(blob);
+	};
+	const loadCreds = (): { email: string; password: string } | null => {
+		try {
+			const row = store.prepare('SELECT blob FROM llu_creds WHERE id = 1').get() as { blob: string } | undefined;
+			if (row) {
+				const b = Buffer.from(row.blob, 'base64');
+				const de = createDecipheriv('aes-256-gcm', credKey(), b.subarray(0, 12));
+				de.setAuthTag(b.subarray(12, 28));
+				return JSON.parse(Buffer.concat([de.update(b.subarray(28)), de.final()]).toString('utf8'));
+			}
+		} catch {}
+		const email = process.env.LLU_EMAIL;
+		const password = process.env.LLU_PASSWORD;
+		return email && password ? { email, password } : null;
+	};
+	class NeedsLogin extends Error {}
 	const llu: { base: string; token: string; accountId: string; patientId: string; cache?: { at: number; data: unknown } } = {
 		base: 'https://api.libreview.io',
 		token: '',
 		accountId: '',
 		patientId: '',
+	};
+	const lluReset = () => {
+		llu.base = 'https://api.libreview.io';
+		llu.token = '';
+		llu.accountId = '';
+		llu.patientId = '';
+		llu.cache = undefined;
 	};
 	const lluHeaders = (auth?: boolean): Record<string, string> => ({
 		'content-type': 'application/json',
@@ -205,12 +236,11 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		'cache-control': 'no-cache',
 		...(auth ? { authorization: `Bearer ${llu.token}`, 'account-id': llu.accountId } : {}),
 	});
-	const lluLogin = async () => {
-		const email = process.env.LLU_EMAIL;
-		const password = process.env.LLU_PASSWORD;
-		if (!email || !password) throw new Error('LLU_EMAIL / LLU_PASSWORD manquants sur le serveur');
+	const lluLogin = async (creds?: { email: string; password: string }) => {
+		const c = creds ?? loadCreds();
+		if (!c) throw new NeedsLogin('Compte LibreLinkUp non connecté');
 		for (let i = 0; i < 2; i++) {
-			const r = await fetch(`${llu.base}/llu/auth/login`, { method: 'POST', headers: lluHeaders(), body: JSON.stringify({ email, password }) });
+			const r = await fetch(`${llu.base}/llu/auth/login`, { method: 'POST', headers: lluHeaders(), body: JSON.stringify({ email: c.email, password: c.password }) });
 			const j: any = await r.json().catch(() => null);
 			if (j?.data?.redirect && j.data.region) {
 				llu.base = `https://api-${j.data.region}.libreview.io`;
@@ -219,7 +249,7 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 			if (j?.data?.step?.type) throw new Error(`LibreLinkUp demande une action dans son app (${j.data.step.type}) : ouvre-la et accepte les conditions`);
 			const token = j?.data?.authTicket?.token;
 			const uid = j?.data?.user?.id;
-			if (!token || !uid) throw new Error(`Connexion LibreLinkUp refusée (${r.status})`);
+			if (!token || !uid) throw new Error(r.status === 429 ? 'Trop de tentatives, réessaie dans quelques minutes' : 'E-mail ou mot de passe LibreLinkUp incorrect');
 			llu.token = token;
 			llu.accountId = createHash('sha256').update(uid).digest('hex');
 			return;
@@ -241,6 +271,28 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		const d = t ? new Date(t + ' UTC') : null;
 		return d && !isNaN(d.getTime()) ? d.toISOString() : null;
 	};
+	app.post('/api/glucose/login', auth, async (req: Request, res: Response) => {
+		const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+		const password = typeof req.body?.password === 'string' ? req.body.password : '';
+		if (!email || !password) {
+			res.status(400).json({ error: 'E-mail et mot de passe requis' });
+			return;
+		}
+		try {
+			lluReset();
+			await lluLogin({ email, password });
+			saveCreds({ email, password });
+			res.json({ ok: true });
+		} catch (err) {
+			lluReset();
+			res.status(400).json({ error: err instanceof Error ? err.message : 'Connexion impossible' });
+		}
+	});
+	app.delete('/api/glucose/login', auth, (_req: Request, res: Response) => {
+		store.prepare('DELETE FROM llu_creds').run();
+		lluReset();
+		res.json({ ok: true });
+	});
 	app.get('/api/glucose', auth, async (_req: Request, res: Response) => {
 		try {
 			if (llu.cache && Date.now() - llu.cache.at < 30_000) {
@@ -267,11 +319,15 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 			res.json(data);
 		} catch (err) {
 			llu.patientId = '';
+			if (err instanceof NeedsLogin) {
+				res.status(412).json({ error: err.message });
+				return;
+			}
 			res.status(502).json({ error: err instanceof Error ? err.message : 'LibreLinkUp indisponible' });
 		}
 	});
 
-	app.get('/api/today', auth, async (_req: Request, res: Response) => {
+	
 		const ok = await refresh();
 		if (!ok) {
 			res.status(409).json({ error: 'Whoop non connecté' });
