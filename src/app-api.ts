@@ -160,7 +160,32 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 			res.status(400).json({ error: 'from/to invalides' });
 			return;
 		}
-		res.json({ recoveries: db.getRecoveriesByDateRange(range.from, range.to).map(r => ({ at: r.created_at, score: r.recovery_score })) });
+		const sleeps = db.getSleepsByDateRange(range.from, range.to, false);
+		res.json({
+			recoveries: db.getRecoveriesByDateRange(range.from, range.to).map(r => ({ at: r.created_at, score: r.recovery_score })),
+			cycles: db.getCyclesByDateRange(range.from, range.to).map(c => ({ at: c.start_time, strain: c.strain != null ? Math.round(c.strain * 10) / 10 : null })),
+			sleeps: sleeps.map(x => ({
+				at: x.end_time,
+				performance: x.sleep_performance,
+				hours: Math.round((((x.total_in_bed_milli ?? 0) - (x.total_awake_milli ?? 0)) / 3_600_000) * 100) / 100,
+			})),
+		});
+	});
+
+	// Poids du profil Whoop (synchronisé depuis Apple Santé) + historique des changements observés.
+	app.get('/api/weight', auth, async (_req: Request, res: Response) => {
+		const tokens = db.getTokens();
+		if (tokens) {
+			client.setTokens(tokens);
+			try {
+				const b = await client.getBodyMeasurement();
+				if (b?.weight_kilogram) db.recordWeight(b.weight_kilogram);
+			} catch (err) {
+				process.stderr.write(`[app-api] weight failed: ${err instanceof Error ? err.message : 'unknown'}\n`);
+			}
+		}
+		const rows = store.prepare('SELECT weight_kilogram AS kg, first_observed_at AS at FROM weight_observations ORDER BY id ASC').all() as { kg: number; at: string }[];
+		res.json({ current: rows.length ? rows[rows.length - 1].kg : null, history: rows });
 	});
 
 	app.get('/api/today', auth, async (_req: Request, res: Response) => {
