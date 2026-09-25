@@ -56,6 +56,17 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		const nap = db.getTodayNap();
 		const cycle = db.getTodayCycle() ?? db.getLatestCycle();
 		const trends = db.getRecoveryTrends(8).slice().reverse();
+		const workouts = db.getTodayWorkouts().map(w => ({
+			id: w.id,
+			name: w.sport_name ?? 'Activité',
+			startISO: w.start_time,
+			endISO: w.end_time,
+			strain: w.strain != null ? Math.round(w.strain * 10) / 10 : null,
+			calories: w.kilojoule != null ? Math.round(w.kilojoule / 4.184) : null,
+			avgHr: w.avg_hr,
+			maxHr: w.max_hr,
+			distanceMeter: w.distance_meter,
+		}));
 
 		const ends = [sleep?.end_time, nap?.end_time].filter((v): v is string => Boolean(v));
 		const wakeTimeISO = ends.length ? ends.sort().at(-1)! : null;
@@ -79,6 +90,7 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 			wakeTimeISO,
 			recoveryWeek: trends.map(t => t.recovery_score),
 			hrvWeek: trends.map(t => Math.round(t.hrv)),
+			workouts,
 			updatedAt: new Date().toISOString(),
 		};
 	};
