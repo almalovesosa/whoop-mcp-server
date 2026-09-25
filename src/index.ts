@@ -785,8 +785,8 @@ async function main(): Promise<void> {
 			res.status(410).send('SSE endpoint deprecated. Use /mcp with Streamable HTTP transport.');
 		});
 
-		const server = app.listen(config.port, '127.0.0.1', () => {
-			process.stdout.write(`Whoop MCP server running on http://127.0.0.1:${config.port}\n`);
+		const server = app.listen(config.port, '0.0.0.0', () => {
+			process.stdout.write(`Whoop MCP server running on http://0.0.0.0:${config.port}\n`);
 		});
 
 		const shutdown = (): void => {
