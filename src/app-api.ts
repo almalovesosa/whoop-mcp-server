@@ -91,6 +91,8 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 			recoveryWeek: trends.map(t => t.recovery_score),
 			hrvWeek: trends.map(t => Math.round(t.hrv)),
 			workouts,
+			sleep: sleep ? { startISO: sleep.start_time, endISO: sleep.end_time, performance: sleep.sleep_performance } : null,
+			nap: nap ? { startISO: nap.start_time, endISO: nap.end_time, performance: nap.sleep_performance } : null,
 			updatedAt: new Date().toISOString(),
 		};
 	};
