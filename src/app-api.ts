@@ -415,8 +415,9 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 			res.status(503).json({ error: 'ANTHROPIC_API_KEY manquant sur le serveur' });
 			return;
 		}
-		const messages = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
+		const messages = Array.isArray(req.body?.messages) ? req.body.messages.slice(-40) : [];
 		const context = req.body?.context ?? {};
+		const tools = Array.isArray(req.body?.tools) ? req.body.tools : [];
 		if (!messages.length) {
 			res.status(400).json({ error: 'messages manquants' });
 			return;
@@ -424,8 +425,9 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 		let whoop: unknown = null;
 		if (await refresh()) whoop = buildToday();
 
-		const system = `Tu es Jarvis, l'assistant personnel d'Almamy. Réponds en français, de façon brève, directe et élégante (3 à 6 phrases max, pas de listes sauf si nécessaire), comme dans une conversation SMS.
-Tu as accès à ses données du jour. Pour les peptides, rappelle uniquement ce qui est inscrit dans son protocole (nom, dosage, horaire) : ne recommande jamais de nouveau dosage, produit ou combinaison, et suggère d'en parler à un médecin si la question dépasse son protocole.
+		const system = `Tu es Jarvis, l'assistant personnel d'Almamy. Réponds en français, de façon brève, directe et élégante (2 à 5 phrases max, pas de listes sauf si nécessaire), comme dans une conversation SMS.
+Tu as accès à ses données du jour et tu as la main sur son app grâce à des outils : protocole (peptides, skincare), planning, réveil, repas. Quand il te demande d'ajouter, modifier ou supprimer quelque chose, FAIS-LE directement avec les outils (appelle lire_app d'abord si tu as besoin d'un id), puis confirme en une phrase ce que tu as fait. Ne dis jamais que tu ne peux pas le faire si un outil le permet.
+Règles : utilise exactement les valeurs données par Almamy (jamais de dosage ou de valeur nutritionnelle inventés ; si une information nécessaire manque, demande-la). Pour les peptides, ne recommande jamais de nouveau dosage, produit ou combinaison, et suggère d'en parler à un médecin si la question dépasse son protocole. Pour un produit skincare « matin et soir », ajoute deux étapes (am et pm). Ne supprime que ce qu'il demande explicitement de supprimer. Tu n'as aucun accès aux réglages d'insuline ni au calcul de bolus : ne les modifie pas.
 WHOOP: ${JSON.stringify(whoop)}
 PLANNING ET PROTOCOLE: ${JSON.stringify(context)}`;
 
@@ -439,21 +441,22 @@ PLANNING ET PROTOCOLE: ${JSON.stringify(context)}`;
 				},
 				body: JSON.stringify({
 					model: MODEL,
-					max_tokens: 600,
+					max_tokens: 1024,
 					system,
-					messages: messages.map((m: { role: string; content: string }) => ({
+					...(tools.length ? { tools } : {}),
+					messages: messages.map((m: { role: string; content: unknown }) => ({
 						role: m.role === 'assistant' ? 'assistant' : 'user',
-						content: String(m.content ?? ''),
+						content: Array.isArray(m.content) ? m.content : String(m.content ?? ''),
 					})),
 				}),
 			});
-			const data = (await r.json()) as { content?: { type: string; text?: string }[]; error?: { message?: string } };
+			const data = (await r.json()) as { content?: { type: string; text?: string }[]; stop_reason?: string; error?: { message?: string } };
 			if (!r.ok) {
 				res.status(502).json({ error: data.error?.message ?? 'Erreur Anthropic' });
 				return;
 			}
 			const text = (data.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-			res.json({ text });
+			res.json({ text, content: data.content ?? [], stop_reason: data.stop_reason ?? 'end_turn' });
 		} catch (err) {
 			res.status(502).json({ error: err instanceof Error ? err.message : 'Erreur réseau' });
 		}
