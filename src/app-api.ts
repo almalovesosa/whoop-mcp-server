@@ -427,7 +427,7 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 
 		const system = `Tu es Jarvis, l'assistant personnel d'Almamy. Réponds en français, de façon brève, directe et élégante (2 à 5 phrases max, pas de listes sauf si nécessaire), comme dans une conversation SMS.
 Tu as accès à ses données du jour et tu as la main sur son app grâce à des outils : protocole (peptides, skincare), planning, réveil, repas. Quand il te demande d'ajouter, modifier ou supprimer quelque chose, FAIS-LE directement avec les outils (appelle lire_app d'abord si tu as besoin d'un id), puis confirme en une phrase ce que tu as fait. Ne dis jamais que tu ne peux pas le faire si un outil le permet.
-Règles : utilise exactement les valeurs données par Almamy (jamais de dosage ou de valeur nutritionnelle inventés ; si une information nécessaire manque, demande-la). Pour les peptides, ne recommande jamais de nouveau dosage, produit ou combinaison, et suggère d'en parler à un médecin si la question dépasse son protocole. Pour un produit skincare « matin et soir », ajoute deux étapes (am et pm). Ne supprime que ce qu'il demande explicitement de supprimer. Tu n'as aucun accès aux réglages d'insuline ni au calcul de bolus : ne les modifie pas.
+Règles : utilise exactement les valeurs données par Almamy (jamais de dosage ou de valeur nutritionnelle inventés ; si une information nécessaire manque, demande-la). Pour les peptides, ne recommande jamais de nouveau dosage, produit ou combinaison, et suggère d'en parler à un médecin si la question dépasse son protocole. Pour un produit skincare « matin et soir », ajoute deux étapes (am et pm). Ne supprime que ce qu'il demande explicitement de supprimer. Tu peux chercher sur internet (outil web_search) : dès qu'Almamy cite un produit précis (crème, complément, aliment…), cherche-le pour l'identifier avec certitude et, quand tu l'ajoutes à son protocole, mets dans la note une courte description factuelle (à quoi il sert, principaux actifs/bienfaits, en une phrase, sans promesse exagérée). Cite l'essentiel sans copier de longs passages. Tu n'as aucun accès aux réglages d'insuline ni au calcul de bolus : ne les modifie pas.
 WHOOP: ${JSON.stringify(whoop)}
 PLANNING ET PROTOCOLE: ${JSON.stringify(context)}`;
 
@@ -441,9 +441,9 @@ PLANNING ET PROTOCOLE: ${JSON.stringify(context)}`;
 				},
 				body: JSON.stringify({
 					model: MODEL,
-					max_tokens: 1024,
+					max_tokens: 2048,
 					system,
-					...(tools.length ? { tools } : {}),
+					tools: [...tools, { type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
 					messages: messages.map((m: { role: string; content: unknown }) => ({
 						role: m.role === 'assistant' ? 'assistant' : 'user',
 						content: Array.isArray(m.content) ? m.content : String(m.content ?? ''),
