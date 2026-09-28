@@ -353,10 +353,10 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		const what = [barcode ? `code-barres EAN ${barcode}` : '', [brand, name].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
 		const prompt = `Trouve les valeurs nutritionnelles pour 100 g (ou 100 ml) de ce produit alimentaire : ${what}.
 Cherche sur le web (site de la marque, Open Food Facts, sites de supermarchés comme Carrefour, Auchan, Leclerc, Intermarché, fiches produit). Recoupe si possible deux sources.
-Donne AUSSI le potassium, le magnésium et le sodium (pas le sel : sodium = sel / 2,5) pour 100 g/ml, en milligrammes : cherche-les vraiment, avec la même rigueur que les calories (pour un aliment brut comme une viande, un fruit ou un légume, une base comme l'USDA FoodData Central ou Ciqual donne quasi toujours ces trois valeurs). Ne mets 0 qu'en dernier recours, si tu as vraiment cherché et rien trouvé ; ne les laisse jamais vides par simple flemme de chercher plus loin.
-Réponds UNIQUEMENT avec un objet JSON sur une seule ligne : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"potassium100":nombre,"magnesium100":nombre,"sodium100":nombre,"source":"site ou url"}
-carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas les valeurs principales (calories, glucides, lipides, protéines), réponds {"error":"introuvable"}. Ne devine jamais.`;
-		try {
+Donne aussi le potassium, le magnésium et le sodium (pas le sel : sodium = sel / 2,5) pour 100 g/ml, en milligrammes.
+Cas particulier important pour ces trois-là : si c'est un aliment brut et courant, sans marque (une viande, un poisson, un fruit, un légume, un féculent, un laitage nature...), ce sont des constantes nutritionnelles bien connues et stables (tables USDA FoodData Central, Ciqual) — donne-les directement si tu les connais avec confiance, même sans les avoir vues affichées sur la page web que tu consultes pour les calories ; ne les laisse pas à 0 juste parce que la fiche produit que tu regardes ne les affiche pas. Pour un produit de marque avec une recette propre (plat préparé, biscuit, boisson...), cherche-les comme le reste et mets 0 seulement si vraiment introuvable après recherche.
+Réponds UNIQUEMENT avec un objet JSON sur une seule ligne, avec exactement ces clés : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"potassium100":nombre,"magnesium100":nombre,"sodium100":nombre,"source":"site, base nutritionnelle ou connaissance générale"}
+carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas les valeurs principales (calories, glucides, lipides, protéines), réponds {"error":"introuvable"}. Ne devine jamais les valeurs principales (calories, glucides, lipides, protéines) : elles doivent venir d'une source vue.`;
 			const r = await fetch('https://api.anthropic.com/v1/messages', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
@@ -373,7 +373,9 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 				return;
 			}
 			const text = (data.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
-			const raw = text.match(/\{[^{}]*\}/g)?.at(-1);
+			// Le texte peut contenir d'autres accolades (raisonnement, extraits de pages) : on prend l'objet qui a vraiment nos clés.
+			const candidates = text.match(/\{[^{}]*\}/g) ?? [];
+			const raw = [...candidates].reverse().find(m => m.includes('kcal100') || m.includes('"error"')) ?? candidates.at(-1);
 			const j = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
 			const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 			const kcal100 = num(j?.kcal100);
