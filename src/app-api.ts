@@ -353,8 +353,9 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		const what = [barcode ? `code-barres EAN ${barcode}` : '', [brand, name].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
 		const prompt = `Trouve les valeurs nutritionnelles pour 100 g (ou 100 ml) de ce produit alimentaire : ${what}.
 Cherche sur le web (site de la marque, Open Food Facts, sites de supermarchés comme Carrefour, Auchan, Leclerc, Intermarché, fiches produit). Recoupe si possible deux sources.
-Réponds UNIQUEMENT avec un objet JSON sur une seule ligne : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"source":"site ou url"}
-carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas de valeurs fiables, réponds {"error":"introuvable"}. Ne devine jamais.`;
+Donne aussi le potassium, le magnésium et le sodium (pas le sel : sodium = sel / 2,5) pour 100 g/ml, en milligrammes ; mets 0 si vraiment introuvable, sans deviner.
+Réponds UNIQUEMENT avec un objet JSON sur une seule ligne : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"potassium100":nombre,"magnesium100":nombre,"sodium100":nombre,"source":"site ou url"}
+carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas les valeurs principales (calories, glucides, lipides, protéines), réponds {"error":"introuvable"}. Ne devine jamais.`;
 		try {
 			const r = await fetch('https://api.anthropic.com/v1/messages', {
 				method: 'POST',
@@ -383,7 +384,18 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 				res.status(404).json({ error: 'introuvable' });
 				return;
 			}
-			res.json({ name: String(j.name ?? name ?? ''), brand: String(j.brand ?? brand ?? ''), kcal100, carbs100, fat100, protein100, source: String(j.source ?? 'web') });
+			res.json({
+				name: String(j.name ?? name ?? ''),
+				brand: String(j.brand ?? brand ?? ''),
+				kcal100,
+				carbs100,
+				fat100,
+				protein100,
+				potassium100: num(j?.potassium100) ?? 0,
+				magnesium100: num(j?.magnesium100) ?? 0,
+				sodium100: num(j?.sodium100) ?? 0,
+				source: String(j.source ?? 'web'),
+			});
 		} catch (err) {
 			res.status(502).json({ error: err instanceof Error ? err.message : 'Erreur réseau' });
 		}
