@@ -357,8 +357,8 @@ Donne aussi le potassium, le magnésium et le sodium (pas le sel : sodium = sel 
 Cas particulier important pour ces trois-là : si c'est un aliment brut et courant, sans marque (une viande, un poisson, un fruit, un légume, un féculent, un laitage nature...), ce sont des constantes nutritionnelles bien connues et stables (tables USDA FoodData Central, Ciqual) — donne-les directement si tu les connais avec confiance, même sans les avoir vues affichées sur la page web que tu consultes pour les calories ; ne les laisse pas à 0 juste parce que la fiche produit que tu regardes ne les affiche pas. Pour un produit de marque avec une recette propre (plat préparé, biscuit, boisson...), cherche-les comme le reste et mets 0 seulement si vraiment introuvable après recherche.
 Réponds UNIQUEMENT avec un objet JSON sur une seule ligne, avec exactement ces clés : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"potassium100":nombre,"magnesium100":nombre,"sodium100":nombre,"source":"site, base nutritionnelle ou connaissance générale"}
 carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas les valeurs principales (calories, glucides, lipides, protéines), réponds {"error":"introuvable"}. Ne devine jamais les valeurs principales (calories, glucides, lipides, protéines) : elles doivent venir d'une source vue.`;
-					try {
-const r = await fetch('https://api.anthropic.com/v1/messages', {
+		try {
+			const r = await fetch('https://api.anthropic.com/v1/messages', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
 				body: JSON.stringify({
