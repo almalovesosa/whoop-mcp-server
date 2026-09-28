@@ -353,7 +353,7 @@ export function registerAppApi(app: Express, { db, client, sync, dbPath }: Deps)
 		const what = [barcode ? `code-barres EAN ${barcode}` : '', [brand, name].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
 		const prompt = `Trouve les valeurs nutritionnelles pour 100 g (ou 100 ml) de ce produit alimentaire : ${what}.
 Cherche sur le web (site de la marque, Open Food Facts, sites de supermarchés comme Carrefour, Auchan, Leclerc, Intermarché, fiches produit). Recoupe si possible deux sources.
-Donne aussi le potassium, le magnésium et le sodium (pas le sel : sodium = sel / 2,5) pour 100 g/ml, en milligrammes ; mets 0 si vraiment introuvable, sans deviner.
+Donne AUSSI le potassium, le magnésium et le sodium (pas le sel : sodium = sel / 2,5) pour 100 g/ml, en milligrammes : cherche-les vraiment, avec la même rigueur que les calories (pour un aliment brut comme une viande, un fruit ou un légume, une base comme l'USDA FoodData Central ou Ciqual donne quasi toujours ces trois valeurs). Ne mets 0 qu'en dernier recours, si tu as vraiment cherché et rien trouvé ; ne les laisse jamais vides par simple flemme de chercher plus loin.
 Réponds UNIQUEMENT avec un objet JSON sur une seule ligne : {"name":"...","brand":"...","kcal100":nombre,"carbs100":nombre,"fat100":nombre,"protein100":nombre,"potassium100":nombre,"magnesium100":nombre,"sodium100":nombre,"source":"site ou url"}
 carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sans unité. Si tu ne trouves pas les valeurs principales (calories, glucides, lipides, protéines), réponds {"error":"introuvable"}. Ne devine jamais.`;
 		try {
