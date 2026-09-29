@@ -407,6 +407,7 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 			res.status(502).json({ error: err instanceof Error ? err.message : 'Erreur réseau' });
 		}
 	});
+
 	// Recherche web (Claude + outil web_search) d'un complément alimentaire : ce qu'apporte UNE prise (comprimé, gélule…).
 	app.post('/api/supplement-lookup', auth, async (req: Request, res: Response) => {
 		const key = process.env.ANTHROPIC_API_KEY;
