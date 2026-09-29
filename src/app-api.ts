@@ -407,6 +407,65 @@ carbs100 = glucides totaux (pas seulement les sucres). Nombres pour 100 g/ml, sa
 			res.status(502).json({ error: err instanceof Error ? err.message : 'Erreur réseau' });
 		}
 	});
+	// Recherche web (Claude + outil web_search) d'un complément alimentaire : ce qu'apporte UNE prise (comprimé, gélule…).
+	app.post('/api/supplement-lookup', auth, async (req: Request, res: Response) => {
+		const key = process.env.ANTHROPIC_API_KEY;
+		if (!key) {
+			res.status(503).json({ error: 'ANTHROPIC_API_KEY manquant sur le serveur' });
+			return;
+		}
+		const barcode = String(req.body?.barcode ?? '').replace(/\D/g, '');
+		const name = String(req.body?.name ?? '').trim().slice(0, 120);
+		const brand = String(req.body?.brand ?? '').trim().slice(0, 80);
+		if (!barcode && !name) {
+			res.status(400).json({ error: 'barcode ou name requis' });
+			return;
+		}
+		const what = [barcode ? `code-barres EAN ${barcode}` : '', [brand, name].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
+		const prompt = `Trouve la fiche de ce complément alimentaire : ${what}.
+Cherche sur le web (site de la marque, Open Food Facts, pharmacies en ligne, Amazon, iHerb, Nutrimuscle, fiches produit). Recoupe si possible deux sources.
+Donne ce qu'apporte UNE prise standard recommandée par le fabricant (comprimé, gélule, cuillère, sachet…) : le potassium, le magnésium et le sodium en milligrammes, et une description courte de la prise (ex. "1 comprimé", "2 gélules").
+Mets 0 pour un minéral seulement s'il n'entre vraiment pas dans la formule du produit (ne devine jamais un chiffre) : beaucoup de compléments n'ont qu'un seul des trois, c'est normal.
+Réponds UNIQUEMENT avec un objet JSON sur une seule ligne, avec exactement ces clés : {"name":"...","brand":"...","note":"...","potassium":nombre,"magnesium":nombre,"sodium":nombre,"source":"site ou url"}
+Si tu ne trouves pas ce produit du tout, réponds {"error":"introuvable"}.`;
+		try {
+			const r = await fetch('https://api.anthropic.com/v1/messages', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+				body: JSON.stringify({
+					model: MODEL,
+					max_tokens: 1200,
+					tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+					messages: [{ role: 'user', content: prompt }],
+				}),
+			});
+			const data = (await r.json()) as { content?: { type: string; text?: string }[]; error?: { message?: string } };
+			if (!r.ok) {
+				res.status(502).json({ error: data.error?.message ?? 'Erreur Anthropic' });
+				return;
+			}
+			const text = (data.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
+			const candidates = text.match(/\{[^{}]*\}/g) ?? [];
+			const raw = [...candidates].reverse().find(m => m.includes('"note"') || m.includes('"error"')) ?? candidates.at(-1);
+			const j = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+			const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+			if (!j || j.error || !j.name) {
+				res.status(404).json({ error: 'introuvable' });
+				return;
+			}
+			res.json({
+				name: String(j.name ?? name ?? ''),
+				brand: String(j.brand ?? brand ?? ''),
+				note: String(j.note ?? ''),
+				potassium: num(j?.potassium) ?? 0,
+				magnesium: num(j?.magnesium) ?? 0,
+				sodium: num(j?.sodium) ?? 0,
+				source: String(j.source ?? 'web'),
+			});
+		} catch (err) {
+			res.status(502).json({ error: err instanceof Error ? err.message : 'Erreur réseau' });
+		}
+	});
 
 	app.get('/api/state', auth, (_req: Request, res: Response) => {
 		const row = store.prepare('SELECT data, updated_at FROM app_state WHERE id = 1').get() as
